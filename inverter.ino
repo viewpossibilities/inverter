@@ -24,22 +24,31 @@ const double currentCalibFactor = 111.1;
 #define voltageV A4  // Pin assignment for phase V voltage sensor
 #define voltageW A5  // Pin assignment for phase W voltage sensor
 
-#define mosfetU_Pin A7  // Pin assignment for phase U mosfet temperature sensor
-#define mosfetV_Pin A8  // Pin assignment for phase V mosfet temperature sensor
-#define mosfetW_Pin A9  // Pin assignment for phase W mosfet temperature sensor
+
 
 #define contactor 7  // pin assignment for the contactor
 #define fan 8
 
+//Temperature starts
+//#define ntc_pin A0 // Pin to which the voltage divider is connected
+#define mosfetU_Pin A7  // Pin assignment for phase U mosfet temperature sensor
+#define mosfetV_Pin A8  // Pin assignment for phase V mosfet temperature sensor
+#define mosfetW_Pin A9  // Pin assignment for phase W mosfet temperature sensor
+#define nominal_resistance 10000 // Nominal resistance at 25⁰C
+#define nominal_temperature 25 // Temperature for nominal resistance (almost always 25⁰C)
+#define sampling_rate 5 // Number of samples
+#define beta 3950 // The beta coefficient or the B value of the thermistor (usually 3000-4000). Check the datasheet for the accurate value.
+#define Rref 9890 // Value of resistor used for the voltage divider, 10000 ohms
+float mosfetTemp_U, mosfetTemp_V, mosfetTemp_W;  // Variables to hold Temp value in degree centigrade of each temperature sensor for phase U,V,W
 
+//temperature ends
 
 float pf = 0.8;  // power factor
 
-float ResistorVal = 10000;  // value of Resistor used in the voltage devider circuit for the mosfet temperature sensors
+//float ResistorVal = 10000;  // value of Resistor used in the voltage devider circuit for the mosfet temperature sensors
 
-float mosfetTemp_U, mosfetTemp_V, mosfetTemp_W;  // Variables to hold Temp value in degree centigrade of each temperature sensor for phase U,V,W
 
-float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;  // sensor calibration constrants according to datasheet
+//float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;  // sensor calibration constrants according to datasheet
 
 //ACouput voltages
 float U_AcOutputVoltage, V_AcOutputVoltage, W_AcOutputVoltage;
@@ -71,6 +80,8 @@ void setup() {
 }
 
 void loop() {
+ 
+
   //saves the AC output voltages in variables for each phase
   U_AcOutputVoltage = AC_outputVoltage(voltageU);
   V_AcOutputVoltage = AC_outputVoltage(voltageV);
@@ -90,13 +101,16 @@ void loop() {
   //saves the DC input battery in a variable
   batteryVoltage = dcInputVoltage(voltageB);
 
+  //Serial.println(batteryVoltage);
+
+
   //check battery voltages
   checkBattery(batteryVoltage);
 
   //saves the MOSFET temperature in variables for each phase
-  mosfetTemp_U = getMosfetTemperature(mosfetU_Pin);
-  mosfetTemp_V = getMosfetTemperature(mosfetV_Pin);
-  mosfetTemp_W = getMosfetTemperature(mosfetW_Pin);
+  mosfetTemp_U  = getTemperature(mosfetU_Pin, sampling_rate, Rref, nominal_resistance, beta, nominal_temperature);
+  mosfetTemp_V = getTemperature(mosfetV_Pin, sampling_rate, Rref, nominal_resistance, beta, nominal_temperature);
+  mosfetTemp_W =getTemperature(mosfetW_Pin, sampling_rate, Rref, nominal_resistance, beta, nominal_temperature);
 
 
   //check mosfet temperatues
@@ -153,17 +167,22 @@ void power_display(float upower, float vpower, float wpower) {
 
 //Function to read AC output voltage
 float AC_outputVoltage(int sensorPin_ACVoltage) {
-  //stepdowntransformer is 220/6V
-  int sensorValue = analogRead(sensorPin_ACVoltage);
+   int sensorValue = analogRead(sensorPin_ACVoltage);
   float voltage = sensorValue * (5.0 / 1023.0);
-  float voltage_ = voltage / 0.5;
-  // voltage_ += 0.75;
-  voltage_ *= 37.5;
-  //Serial.println(voltage_);
-  if (voltage_ < 60) {
-    voltage_ = 0.0;
-  }
-  return voltage_;
+
+  
+ float voltage_ = voltage * ((9730 + 4690) / 4690);
+ voltage_ = voltage_ + 1.05;
+   
+ // voltage_ += 1.17;
+ float ACVolt = (voltage_ * 13.45) + 6.0;
+
+ if ( ACVolt < 11){
+    ACVolt = 0.0;
+    
+ }
+ //Serial.println(ACVolt);
+  return ACVolt;
 }
 
 //display voltage to screen
@@ -201,9 +220,13 @@ void current_display(float ucurrent, float vcurrent, float wcurrent) {
 
 //battery voltage
 float dcInputVoltage(int voltagepin_) {
-  float valB = (analogRead(voltagepin_) * 5) / 1024.0;
-  float voltageB_val = valB / (217 / (4560 + 217));  //calculating the battery output voltage based on the voltage devider circuit
-  return voltageB_val;
+  float valB = analogRead(voltagepin_) * (5.0 / 1023.0);
+  float voltageB_val = valB * ( (4650 + 219) / 219);  //calculating the battery output voltage based on the voltage devider circuit
+  if(voltageB_val < 17.0){
+    voltageB_val = 0.0;
+  }
+  //return voltageB_val + 0.59;
+   return voltageB_val;
 }
 
 //display battery voltage to screen
@@ -220,18 +243,41 @@ void checkBattery(float voltageB_val) {
   } else if (voltageB_val <= 63) {  //  Low battery automatic shutdown
 
     digitalWrite(Buzzer, LOW);
-    digitalWrite(contactor, HIGH);
+    digitalWrite(contactor, LOW);
   } else {
   }
 }
 
-//function that gets MOSFET temperature
+/*//function that gets MOSFET temperature
 float getMosfetTemperature(int mosfet_phase_Pin) {
   float inputValue = analogRead(mosfet_phase_Pin);
   float value = 10000 * (1023.0 / inputValue - 1.0);
   float logValue = log(value);
   float Temp = (1.0 / (c1 + c2 * logValue + c3 * logValue * logValue * logValue));
   return Temp - 273.15;
+}*/
+float getTemperature(uint8_t ntcPin, uint8_t samples, float referenceResistance, float nominalResistance, float betaValue, float nominalTemp) {
+ 
+  int sampleSum = 0;
+  for (uint8_t i = 0; i < samples; i++) {
+    sampleSum += analogRead(ntcPin);
+    delay(10);
+  }
+
+  float average = sampleSum / samples;
+
+
+  average = 1023 / average - 1;
+  float resistance = referenceResistance / average;
+
+
+  float temp = resistance / nominalResistance; // (R/Ro)
+  temp = log(temp); // ln(R/Ro)
+  temp /= betaValue; // 1/B * ln(R/Ro)
+  temp += 1.0 / (nominalTemp + 273.15); // + (1/To)
+  temp = 1.0 / temp; // Invert
+ // return temp - 273.15; // Convert absolute temp to Celsius
+ return temp - 275.15; 
 }
 
 //function that displays the MOSFET temperature
@@ -263,7 +309,7 @@ void temperatureCheck(float TempC_U, float TempC_V, float TempC_W) {
 
     digitalWrite(fan, LOW);
     delay(100);
-    digitalWrite(contactor, HIGH);
+    digitalWrite(contactor, LOW);
   }
 }
 
@@ -292,12 +338,14 @@ String power_button() {
 }
 
 
+
+
 //function that power on the inveter after meeting certain condition and can power it off
 void Power_Inverter(float batVoltage, float TempC_U, float TempC_V, float TempC_W) {
   if (power_button() == "ON") {
     if (batVoltage > 63.0) {
       if ((TempC_U < 65.0) || (TempC_V < 65.0) || (TempC_W < 65.0)) {
-        digitalWrite(contactor, LOW);
+        digitalWrite(contactor, HIGH);
         myNex.writeStr("g0.txt", "Inverter Is Running");
 
       } else {
@@ -309,7 +357,7 @@ void Power_Inverter(float batVoltage, float TempC_U, float TempC_V, float TempC_
       myNex.writeStr("g0.txt", "Battery Is Low, Please Charge");
     }
   } else if (power_button() == "OFF") {
-    digitalWrite(contactor, HIGH);
+    digitalWrite(contactor, LOW);
     myNex.writeStr("g0.txt", "Inverter Is Off");
   }
 }
